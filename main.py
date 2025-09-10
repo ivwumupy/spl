@@ -1,15 +1,20 @@
 from __future__ import annotations
 from dataclasses import dataclass
 import enum
+from abc import ABC, abstractmethod
+
+from collections.abc import Callable
+from typing import Optional, Tuple
 
 
-class NodeVisitor:
-    def visit(self, node):
+class NodeVisitor[T](ABC):
+    def visit(self, node: T):
         method = "visit_" + node.__class__.__name__
         f = getattr(self, method, self._generic_visit)
         return f(node)
 
-    def _generic_visit(self, node):
+    @abstractmethod
+    def _generic_visit(self, node: T):
         pass
 
 
@@ -62,15 +67,15 @@ class Token:
     virtual: bool
 
 
-def is_whitespace(c):
+def is_whitespace(c: str) -> bool:
     return c == " " or c == "\n"
 
 
-def is_ident_start(c):
+def is_ident_start(c: str) -> bool:
     return (c >= "a" and c <= "z") or (c >= "A" and c <= "Z") or (c == "_")
 
 
-def is_ident_cont(c):
+def is_ident_cont(c: str) -> bool:
     return (
         (c >= "a" and c <= "z")
         or (c >= "A" and c <= "Z")
@@ -78,8 +83,10 @@ def is_ident_cont(c):
         or (c >= "0" and c <= "9")
     )
 
-def is_int_lit_start(c):
+
+def is_int_lit_start(c: str) -> bool:
     return c >= "0" and c <= "9"
+
 
 class Lexer:
     def __init__(self, source: str):
@@ -90,7 +97,7 @@ class Lexer:
     def is_end(self):
         return self.index >= len(self.source)
 
-    def peek(self):
+    def peek(self) -> Optional[str]:
         if self.is_end():
             return None
         return self.source[self.index]
@@ -105,14 +112,15 @@ class Lexer:
             return
         self.index += n
 
-    def eat_while(self, f):
+    def eat_while(self, f: Callable[[str], bool]):
         while not self.is_end():
             c = self.peek()
+            assert c is not None
             if not f(c):
                 break
             self.advance()
 
-    def make_token(self, kind: TokenKind):
+    def make_token(self, kind: TokenKind) -> Token:
         start = self.start
         end = self.index
         self.start = self.index
@@ -126,7 +134,7 @@ class Lexer:
             raise StopIteration
         return self.next_token()
 
-    def next_token(self):
+    def next_token(self) -> Token:
         ch = self.peek()
         if ch is None:
             return self.make_token(TokenKind.END_OF_FILE)
@@ -179,7 +187,8 @@ class Lexer:
                     return self.lex_line_comment()
                 self.advance()
                 return self.make_token(TokenKind.DIV)
-        return self.lex_unknown()
+            case _:
+                return self.lex_unknown()
 
     def lex_whitespace(self):
         self.eat_while(is_whitespace)
@@ -251,8 +260,11 @@ class SyntaxNode:
 class SyntaxBuilder:
     # The initial state is a source file node.
     def __init__(self):
-        self.states = []
-        self.current = (SyntaxKind.SOURCE_FILE, [])
+        self.states: list[Tuple[SyntaxKind, list[SyntaxNode | Token]]] = []
+        self.current: Tuple[SyntaxKind, list[SyntaxNode | Token]] = (
+            SyntaxKind.SOURCE_FILE,
+            [],
+        )
 
     def start_node(self, kind: SyntaxKind):
         self.states.append(self.current)
@@ -277,13 +289,15 @@ class SyntaxBuilder:
         kind, children = self.current
         return SyntaxNode(kind=kind, children=children)
 
+
 def is_trivia_token(tok: Token):
     return tok.kind == TokenKind.WHITESPACE or tok.kind == TokenKind.LINE_COMMENT
+
 
 class Parser:
     def __init__(self, lexer: Lexer):
         self.lexer = lexer
-        self.current_token = lexer.next_token()
+        self.current_token: Token = lexer.next_token()
         self.builder = SyntaxBuilder()
 
     def advance(self):
@@ -299,14 +313,14 @@ class Parser:
     def end_node(self):
         self.builder.end_node()
 
-    def push_token(self, kind: TokenKind):
-        self.builder.push_token(kind)
+    def push_token(self, tok: Token):
+        self.builder.push_token(tok)
 
     def parse(self) -> SyntaxNode:
         self.parse_source_file()
         return self.builder.build()
 
-    def advance_while(self, f):
+    def advance_while(self, f: Callable[[Token], bool]):
         while not self.is_end():
             tok = self.current_token
             if not f(tok):
@@ -333,7 +347,6 @@ class Parser:
         self.end_node()
 
     def parse_source_file(self):
-        items = []
         while not self.is_end():
             self.skip_trivia()
             if self.current_token.kind == TokenKind.END_OF_FILE:
@@ -469,7 +482,7 @@ class Parser:
     def expr_leading(self):
         match self.current_token.kind:
             case TokenKind.INT_LIT:
-                self.begin_node(SyntaxKind.INT_LIT)
+                self.start_node(SyntaxKind.INT_LIT)
                 self.advance()
                 self.end_node()
             case _:
@@ -482,7 +495,7 @@ def parse(source: str):
 
 
 # node:
-def pp(node: SyntaxNode | Token, indent=0):
+def pp(node: SyntaxNode | Token, indent: int = 0):
     prefix = " " * indent
     info = f"{prefix}{node.kind}"
     if isinstance(node, Token):
